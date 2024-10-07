@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face and Object Recognition</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        .sidebar {
+            width: 100px;
+            background-color: #f0f0f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px;
+        }
+        .sidebar img {
+            width: 50px;
+            height: auto;
+        }
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: #fff;
+            padding: 20px;
+        }
+
+
+        .buttons {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .buttons button {
+            width: 150px;
+            height: 40px;
+            margin: 0 10px;
+            font-size: 16px;
+            border: none;
+            background-color: #333;
+            color: white;
+            cursor: pointer;
+        }
+        .buttons button#identify {
+            background-color: black;
+            color: white;
+            font-weight: bold;
+        }
+        .buttons button:hover {
+            background-color: #555;
+        }
+
+    .camera-feed {
+        position: relative;
+        width: 640px;
+        height: 480px;
+        border: 2px solid #ddd;
+        background-color: #f8f8f8;
+    }
+    #videoStream {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 640px;
+        height: 480px;
+        z-index: 1; /* Video stream z-index */
+    }
+    #overlayCanvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 640px;
+        height: 480px;
+        z-index: 2; /* Canvas z-index should be higher than video */
+        pointer-events: none; /* 让鼠标事件穿透到视频上 */
+    }
+</style>
+
+    </style>
+    <script>
+        let videoStream;
+        let overlayCanvas;
+        let overlayContext;
+        let detectionInterval;
+        let detectedUserName = "";
+
+        function updateUserName() {
+            document.getElementById('detectedUserName').textContent = detectedUserName;
+        }
+        
+        
+
+        window.onload = function () {
+            videoStream = document.getElementById('videoStream');
+            overlayCanvas = document.getElementById('overlayCanvas');
+            overlayContext = overlayCanvas.getContext('2d');
+
+            // 启动摄像头
+            navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => {
+                    videoStream.srcObject = stream;
+                    videoStream.play();
+                    detectFace();  // 启动人脸检测
+                    detectObject();  // 启动物体检测
+                })
+                .catch(err => {
+                    console.error("Error accessing the camera: ", err);
+                });
+        };
+
+        function detectFace() {
+    detectionInterval = setInterval(function () {
+        // 清空叠加Canvas
+        overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+        // 获取当前帧的图像数据
+        let videoWidth = videoStream.videoWidth;  // 获取实际视频宽度
+        let videoHeight = videoStream.videoHeight;  // 获取实际视频高度
+        let canvas = document.createElement('canvas');
+        canvas.width = videoWidth;
+        canvas.height = videoHeight;
+        let context = canvas.getContext('2d');
+        context.drawImage(videoStream, 0, 0, videoWidth, videoHeight);
+        let imageData = canvas.toDataURL('image/jpeg');
+
+        // 发送帧数据到后端进行人脸检测
+        fetch('/detect_face', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ image: imageData })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.detected) {
+                // 获取人脸位置信息 (x, y, width, height)
+                let face = data.face_location;
+
+                // 计算根据视频实际尺寸进行比例缩放
+                let scaleX = overlayCanvas.width / videoWidth;
+                let scaleY = overlayCanvas.height / videoHeight;
+
+                let x = face[0] * scaleX;  // x 坐标
+                let y = face[1] * scaleY;  // y 坐标
+                let width = face[2] * scaleX;  // 宽度
+                let height = face[3] * scaleY;  // 高度
+
+                // 绘制人脸框
+                overlayContext.strokeStyle = "red";
+                overlayContext.lineWidth = 2;
+                overlayContext.strokeRect(x, y, width, height);
+
+                // 根据是否匹配显示相应的按钮
+                if (data.exists) {
+                    document.getElementById('delete').style.display = 'block';
+                    document.getElementById('register').style.display = 'none';
+                    detectedUserName = data.user_name;
+                } else {
+                    document.getElementById('delete').style.display = 'none';
+                    document.getElementById('register').style.display = 'block';
+                    detectedUserName = "";
+                }
+            } else {
+                document.getElementById('delete').style.display = 'none';
+                document.getElementById('register').style.display = 'none';
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            document.getElementById('delete').style.display = 'none';
+            document.getElementById('register').style.display = 'none';
+        });
+    }, 1000);  // 每秒检测一次
+}
+
+
+function detectObject() {
+    let videoWidth = videoStream.videoWidth;  // 获取实际视频宽度
+    let videoHeight = videoStream.videoHeight;  // 获取实际视频高度
+
+    // 获取当前帧的图像数据
+    let canvas = document.createElement('canvas');
+    canvas.width = videoWidth;
+    canvas.height = videoHeight;
+    let context = canvas.getContext('2d');
+    context.drawImage(videoStream, 0, 0, videoWidth, videoHeight);
+    let imageData = canvas.toDataURL('image/jpeg');
+
+    // 发送帧数据到后端进行物体检测
+    fetch('/detect_object', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ image: imageData })
+    })
+    .then(response => response.json())
+    .then(data => {
+        overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);  // 清空上次检测的框
+
+        if (data.detected) {
+            // 计算根据视频实际尺寸进行比例缩放
+            let scaleX = overlayCanvas.width / videoWidth;
+            let scaleY = overlayCanvas.height / videoHeight;
+
+            // 绘制检测到的物体框和标签
+            data.objects.forEach(obj => {
+                let [x1, y1, x2, y2] = obj.coordinates;
+                let label = obj.label;
+                let confidence = obj.confidence.toFixed(2);
+
+                // 根据视频流的实际分辨率缩放坐标
+                let startX = x1 * scaleX;
+                let startY = y1 * scaleY;
+                let endX = x2 * scaleX;
+                let endY = y2 * scaleY;
+
+                // 绘制物体边框
+                overlayContext.strokeStyle = "blue";
+                overlayContext.lineWidth = 2;
+                overlayContext.strokeRect(startX, startY, endX - startX, endY - startY);
+
+                // 绘制物体标签
+                overlayContext.font = "16px Arial";
+                overlayContext.fillStyle = "yellow";
+                overlayContext.fillText(`${label} (${confidence})`, startX, startY - 10);
+            });
+        } else {
+            alert("No objects detected.");
+        }
+    })
+    .catch(err => {
+        console.error(err);
+    });
+}
+
+        // 删除人脸
+        function deleteFace() {
+            fetch('/delete_face', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ user_name: detectedUserName })
+            }).then(response => response.json())
+              .then(data => {
+                  if (data.success) {
+                      alert("人脸已删除");
+                      document.getElementById('delete').style.display = 'none';
+                  } else {
+                      alert(data.error || "删除失败");
+                  }
+              })
+              .catch(err => console.error(err));
+        }
+
+
+        setInterval(updateUserName, 500);
+    </script>
+</head>
+<body>
+    <div class="container">
+        <!-- 主内容区域 -->
+        <div class="content">
+                <div class="camera-feed" style="position: relative;">
+                    <div id="detectedUser" style="color: green; position: absolute; top: 10px; left: 10px; background-color: rgba(255, 255, 255, 0.7); padding: 5px; z-index: 10;">
+                        检测到用户: <span id="detectedUserName">无</span>
+                    </div>
+                    <video id="videoStream" width="640" height="480" autoplay style="z-index: 1;"></video>
+                    <canvas id="overlayCanvas" width="640" height="480"></canvas>
+                </div>
+                
+                
+
+                <div class="buttons">
+                    <button id="register" onclick="showForm()">录入人脸</button>
+                    <button id="delete" onclick="deleteFace()">删除人脸</button>
+                    <button onclick="detectObject()">识别物体</button>
+                </div>
+            
+
+            
+        </div>
+                        <!-- 弹出表单 -->
+                        <div id="modalBackground" style="display:none;">
+                            <div id="userForm" style="background:white; padding:20px; border:1px solid #ccc; border-radius:5px; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1000; box-shadow: 0 0 10px rgba(0,0,0,0.5);">
+                                <form id="faceForm">
+                                    <label for="user_id">用户ID:</label>
+                                    <input type="text" id="user_id" name="user_id" required><br><br>
+                                    <label for="user_name">用户名:</label>
+                                    <input type="text" id="user_name" name="user_name" required><br><br>
+                                    <button type="button" onclick="submitForm()">提交</button>
+                                    <button type="button" onclick="hideForm()">取消</button>
+                                </form>
+                            </div>
+                        </div>
+                    
+                        <script>
+                            // 显示表单
+                                function showForm() {
+        document.getElementById("modalBackground").style.display = "block"; // 显示背景以及表单
+        document.getElementById("userForm").style.display = "block"; // 确保表单的显示
+    }
+                    
+                            // 隐藏表单
+                            function hideForm() {
+      document.getElementById("modalBackground").style.display = "none"; // 隐藏背景以及表单
+      document.getElementById("userForm").style.display = "none"; // 确保表单的隐藏
+    }
+                    
+                            // 提交表单数据到后端的函数
+                            async function submitForm() {
+                                const user_id = document.getElementById("user_id").value;
+                                const user_name = document.getElementById("user_name").value;
+                                registerFace(user_id, user_name);
+                    
+function registerFace(userId, userName) {
+        let canvas = document.createElement('canvas');
+        canvas.width = videoStream.videoWidth;
+        canvas.height = videoStream.videoHeight;
+        let context = canvas.getContext('2d');
+        context.drawImage(videoStream, 0, 0, canvas.width, canvas.height);
+        let imageData = canvas.toDataURL('image/jpeg');
+
+        fetch('/register_face', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                image: imageData,
+                user_id: userId,
+                user_name: userName
+            })
+        }).then(response => response.json())
+          .then(data => {
+              alert("人脸已录入");
+              document.getElementById('register').style.display = 'none';
+              hideForm(); // 提交成功后隐藏表单
+          })
+          .catch(err => console.error(err));
+    }
+                            }
+                        </script>
+    </div>
+</body>
+</html>
